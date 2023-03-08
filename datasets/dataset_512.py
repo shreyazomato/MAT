@@ -1,4 +1,4 @@
-﻿# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -159,12 +159,13 @@ class Dataset(torch.utils.data.Dataset):
 
 class ImageFolderMaskDataset(Dataset):
     def __init__(self,
-        path,                   # Path to directory or zip.
+        path,                  # Path to directory or zip.
         resolution      = None, # Ensure specific resolution, None = highest available.
         hole_range=[0,1],
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
         self._path = path
+        self._mpath = 'batch1_inverted'
         self._zipfile = None
         self._hole_range = hole_range
 
@@ -176,6 +177,7 @@ class ImageFolderMaskDataset(Dataset):
             self._all_fnames = set(self._get_zipfile().namelist())
         else:
             raise IOError('Path must point to a directory or zip')
+        
 
         PIL.Image.init()
         self._image_fnames = sorted(fname for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
@@ -204,6 +206,13 @@ class ImageFolderMaskDataset(Dataset):
         if self._type == 'zip':
             return self._get_zipfile().open(fname, 'r')
         return None
+    
+    def _open_mfile(self, fname):
+        if self._type == 'dir':
+            return open(os.path.join(self._mpath, fname), 'rb')
+        if self._type == 'zip':
+            return self._get_zipfile().open(fname, 'r')
+        return None
 
     def close(self):
         try:
@@ -222,30 +231,56 @@ class ImageFolderMaskDataset(Dataset):
                 image = pyspng.load(f.read())
             else:
                 image = np.array(PIL.Image.open(f))
+                
+        image = cv2.resize(image, (512, 512))
         if image.ndim == 2:
             image = image[:, :, np.newaxis] # HW => HWC
 
         # for grayscale image
         if image.shape[2] == 1:
             image = np.repeat(image, 3, axis=2)
+            
+        if image.shape[2] == 4:
+            image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
 
         # restricted to 512x512
-        res = 512
-        H, W, C = image.shape
-        if H < res or W < res:
-            top = 0
-            bottom = max(0, res - H)
-            left = 0
-            right = max(0, res - W)
-            image = cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_REFLECT)
-        H, W, C = image.shape
-        h = random.randint(0, H - res)
-        w = random.randint(0, W - res)
-        image = image[h:h+res, w:w+res, :]
+#         res = 512
+#         H, W, C = image.shape
+#         if H < res or W < res:
+#             top = 0
+#             bottom = max(0, res - H)
+#             left = 0
+#             right = max(0, res - W)
+#             image = cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_REFLECT)
+#         H, W, C = image.shape
+#         h = random.randint(0, H - res)
+#         w = random.randint(0, W - res)
+#         image = image[h:h+res, w:w+res, :]
 
         image = np.ascontiguousarray(image.transpose(2, 0, 1)) # HWC => CHW
 
         return image
+    
+    def _load_raw_mimage(self, raw_idx):
+        fname = self._image_fnames[raw_idx]
+        with self._open_mfile(fname) as f:
+            if pyspng is not None and self._file_ext(fname) == '.png':
+                mask = pyspng.load(f.read())
+            else:
+                mask = np.array(PIL.Image.open(f))
+#         print(mask.ndim)
+#         if mask.ndim == 2:
+#             mask = mask[:, :, np.newaxis]
+        resized_mask = cv2.resize(mask, (512, 512))
+        gray_img = cv2.cvtColor(resized_mask, cv2.COLOR_BGR2GRAY)
+
+        # Apply a threshold to convert the grayscale image to binary
+        thresh_img = cv2.threshold(gray_img, 128, 255, cv2.THRESH_BINARY)[1]
+#         # Convert the mask to binary
+#         gray_mask = cv2.cvtColor(resized_mask, cv2.COLOR_BGR2GRAY)
+#         _, binary_mask = cv2.threshold(gray_mask, 127, 255, cv2.THRESH_BINARY)
+        
+        return thresh_img[np.newaxis, ...].astype(np.float32)
 
     def _load_raw_labels(self):
         fname = 'labels.json'
@@ -263,20 +298,27 @@ class ImageFolderMaskDataset(Dataset):
 
     def __getitem__(self, idx):
         image = self._load_raw_image(self._raw_idx[idx])
-
+        mask = self._load_raw_mimage(self._raw_idx[idx])
+#         print(mask.shape)
         assert isinstance(image, np.ndarray)
         assert list(image.shape) == self.image_shape
         assert image.dtype == np.uint8
         if self._xflip[idx]:
             assert image.ndim == 3 # CHW
             image = image[:, :, ::-1]
-        mask = RandomMask(image.shape[-1], hole_range=self._hole_range)  # hole as 0, reserved as 1
+#         assert isinstance(mask, np.ndarray)
+#         assert list(mask.shape) == (1,512,512)
+#         assert mask.dtype == np.uint8
+#         if self._xflip[idx]:
+#             assert mask.ndim == 3 # CHW
+#             mask = mask[:, :, ::-1]
+#         mask = RandomMask(image.shape[-1], hole_range=self._hole_range)  # hole as 0, reserved as 1
         return image.copy(), mask, self.get_label(idx)
 
 
 if __name__ == '__main__':
     res = 512
-    dpath = '/data/liwenbo/datasets/Places365/standard/val_large'
+    dpath = 'batch1_original'
     D = ImageFolderMaskDataset(path=dpath)
     print(D.__len__())
     for i in range(D.__len__()):
