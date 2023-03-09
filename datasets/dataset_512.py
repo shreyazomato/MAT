@@ -165,7 +165,7 @@ class ImageFolderMaskDataset(Dataset):
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
         self._path = path
-        self._mpath = 'batch1_inverted'
+        self._mpath = 'model/batch1_mask'
         self._zipfile = None
         self._hole_range = hole_range
 
@@ -318,7 +318,7 @@ class ImageFolderMaskDataset(Dataset):
 
 if __name__ == '__main__':
     res = 512
-    dpath = 'batch1_original'
+    dpath = 'model/batch1_original'
     D = ImageFolderMaskDataset(path=dpath)
     print(D.__len__())
     for i in range(D.__len__()):
