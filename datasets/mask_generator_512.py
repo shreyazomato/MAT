@@ -2,7 +2,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 import math
 import random
-
+import cv2
 
 def RandomBrush(
     max_tries,
@@ -58,25 +58,48 @@ def RandomBrush(
         mask = np.flip(mask, 1)
     return mask
 
-def RandomMask(s, hole_range=[0,1]):
-    coef = min(hole_range[0] + hole_range[1], 1.0)
-    while True:
-        mask = np.ones((s, s), np.uint8)
-        def Fill(max_size):
-            w, h = np.random.randint(max_size), np.random.randint(max_size)
-            ww, hh = w // 2, h // 2
-            x, y = np.random.randint(-ww, s - w + ww), np.random.randint(-hh, s - h + hh)
-            mask[max(y, 0): min(y + h, s), max(x, 0): min(x + w, s)] = 0
-        def MultiFill(max_tries, max_size):
-            for _ in range(np.random.randint(max_tries)):
-                Fill(max_size)
-        MultiFill(int(5 * coef), s // 2)
-        MultiFill(int(3 * coef), s)
-        mask = np.logical_and(mask, 1 - RandomBrush(int(9 * coef), s))  # hole denoted as 0, reserved as 1
-        hole_ratio = 1 - np.mean(mask)
-        if hole_range is not None and (hole_ratio <= hole_range[0] or hole_ratio >= hole_range[1]):
-            continue
-        return mask[np.newaxis, ...].astype(np.float32)
+def RandomMask(s, filename=None):
+    if filename is not None:
+        # Load mask from file
+        filepath = 'model/batch1_mask/' + filename
+        mask = Image.open(filepath).convert('L')
+        mask = np.asarray(mask, np.uint8)
+        mask = (mask >= 127).astype(np.float32)
+        print(mask.shape)
+        res = 512
+        H, W = mask.shape
+        if H < res or W < res:
+            top = 0
+            bottom = max(0, res - H)
+            left = 0
+            right = max(0, res - W)
+            mask = cv2.copyMakeBorder(mask, top, bottom, left, right, cv2.BORDER_REFLECT)
+        H, W = mask.shape
+        h = random.randint(0, H - res)
+        w = random.randint(0, W - res)
+        mask = mask[h:h+res, w:w+res]
+    else:
+        # Generate random mask as before
+        coef = min(hole_range[0] + hole_range[1], 1.0)
+        while True:
+            mask = np.ones((s, s), np.uint8)
+            def Fill(max_size):
+                w, h = np.random.randint(max_size), np.random.randint(max_size)
+                ww, hh = w // 2, h // 2
+                x, y = np.random.randint(-ww, s - w + ww), np.random.randint(-hh, s - h + hh)
+                mask[max(y, 0): min(y + h, s), max(x, 0): min(x + w, s)] = 0
+            def MultiFill(max_tries, max_size):
+                for _ in range(np.random.randint(max_tries)):
+                    Fill(max_size)
+            MultiFill(int(5 * coef), s // 2)
+            MultiFill(int(3 * coef), s)
+            mask = np.logical_and(mask, 1 - RandomBrush(int(9 * coef), s))  # hole denoted as 0, reserved as 1
+            hole_ratio = 1 - np.mean(mask)
+            if hole_range is not None and (hole_ratio <= hole_range[0] or hole_ratio >= hole_range[1]):
+                continue
+            mask = mask.astype(np.float32)
+            break
+    return mask[np.newaxis, ...]
 
 def BatchRandomMask(batch_size, s, hole_range=[0, 1]):
     return np.stack([RandomMask(s, hole_range=hole_range) for _ in range(batch_size)], axis=0)
